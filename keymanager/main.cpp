@@ -378,8 +378,8 @@ int hashMasterPassword(char * hash, const char * const password) {
             hash,
             password,
             strlen(password),
-            crypto_pwhash_OPSLIMIT_MIN,
-            crypto_pwhash_MEMLIMIT_MIN);
+            crypto_pwhash_OPSLIMIT_SENSITIVE,
+            crypto_pwhash_MEMLIMIT_SENSITIVE);
 }
 
 int checkMasterPassword(const char * const hash, const char * const password) {
@@ -396,8 +396,8 @@ int KDF(unsigned char * key, const char * const password, const unsigned char * 
             password,
             strlen(password),
             salt,
-            crypto_pwhash_OPSLIMIT_MIN,
-            crypto_pwhash_MEMLIMIT_MIN,
+            crypto_pwhash_OPSLIMIT_MODERATE,
+            crypto_pwhash_MEMLIMIT_MODERATE,
             crypto_pwhash_ALG_DEFAULT);
 }
 
