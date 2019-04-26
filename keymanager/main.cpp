@@ -109,7 +109,6 @@ int main(int argc, char** argv) {
 
         while (state == UNLOCKED) {
             cout << "The app is now unlocked !" << endl;
-
             int choice;
             fstream siteFile;
             fstream passwordFile;
@@ -184,7 +183,7 @@ int main(int argc, char** argv) {
                         if (decrypted == NULL) {
                             return EXIT_FAILURE;
                         }
-                        decrypted[cipher.size() - crypto_secretbox_KEYBYTES] = '\0';
+                        decrypted[cipher.size() - crypto_secretbox_MACBYTES] = '\0';
 
                         if (decryptPassword(decrypted, (unsigned char*) cipher.c_str(), key, (unsigned char*) nonce.c_str())) {
                             cout << "I may have lost this password..." << endl;
@@ -215,7 +214,7 @@ int main(int argc, char** argv) {
                     //fgets(password, PASSWORD_LENGTH, stdin);
 
                     // Encrypt the password and release the memory.
-                    unsigned char cipher[crypto_secretbox_KEYBYTES + strlen((char*) password)];
+                    unsigned char cipher[crypto_secretbox_MACBYTES + strlen((char*) password)];
                     encryptPassword(cipher, key, nonce, password);
                     sodium_free(password);
 
@@ -255,7 +254,7 @@ int main(int argc, char** argv) {
 
 
                     // Prepare the new values.
-                    FILE* tmp_masterFile = fopen(MASTER_PASSWORD_FILENAME, "r+"); // NULL if there's no file.
+                    FILE* tmp_masterFile;
                     char* tmp_masterPassword = (char*) sodium_malloc(MASTER_PASSWORD_LENGTH + 1);
                     if (tmp_masterPassword == NULL) {
                         return EXIT_FAILURE;
@@ -290,10 +289,6 @@ int main(int argc, char** argv) {
                     old_passwordFile.open(PASSWORD_FILENAME);
                     old_nonceFile.open(NONCE_FILENAME);
 
-                    new_siteFile.open(tmp_site_filename, ios::app);
-                    new_passwordFile.open(tmp_password_filename, ios::app);
-                    new_nonceFile.open(tmp_nonce_filename, ios::app);
-
                     string old_site;
                     string old_cipher;
                     string old_nonce;
@@ -307,7 +302,7 @@ int main(int argc, char** argv) {
                         if (decrypted == NULL) {
                             return EXIT_FAILURE;
                         }
-                        decrypted[old_cipher.size() - crypto_secretbox_KEYBYTES] = '\0';
+                        decrypted[old_cipher.size() - crypto_secretbox_MACBYTES] = '\0';
                         // Some password may be lost...
 
 
@@ -317,16 +312,34 @@ int main(int argc, char** argv) {
                             continue;
                         }
 
+                        
+
                         // Encrypt again
+                        // TODO: I don't know what
                         unsigned char new_nonce[crypto_secretbox_NONCEBYTES];
-                        unsigned char new_cipher[crypto_secretbox_KEYBYTES + strlen((char*) decrypted)];
+                        unsigned char new_cipher[crypto_secretbox_MACBYTES + strlen((char*) decrypted)];
                         encryptPassword(new_cipher, new_key, new_nonce, decrypted);
+                        
+                        if (decryptPassword(decrypted, new_cipher, new_key, new_nonce)) {
+                            cout << "This should not happen... but it does :)" << endl;
+                            sodium_free(decrypted);
+                            continue;
+                        }
+
                         sodium_free(decrypted);
 
                         // Store
+                        new_siteFile.open(tmp_site_filename, ios::app);
                         new_siteFile << old_site << endl;
+                        new_siteFile.close();
+
+                        new_passwordFile.open(tmp_password_filename, ios::app);
                         new_passwordFile << base64_encode(new_cipher, sizeof (new_cipher)) << endl;
+                        new_passwordFile.close();
+
+                        new_nonceFile.open(tmp_nonce_filename, ios::app);                        
                         new_nonceFile << base64_encode(new_nonce, sizeof (new_nonce)) << endl;
+                        new_nonceFile.close();
 
                     }
                     sodium_free(new_key);
@@ -334,9 +347,7 @@ int main(int argc, char** argv) {
                     old_siteFile.close();
                     old_passwordFile.close();
                     old_nonceFile.close();
-                    new_siteFile.close();
-                    new_passwordFile.close();
-                    new_nonceFile.close();
+                    
 
                     // Replace the old files by the new one.
                     remove(MASTER_PASSWORD_FILENAME);
