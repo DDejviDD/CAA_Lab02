@@ -41,7 +41,7 @@ void newMaster(char* masterPassword, FILE * masterFile, char * hashed_password, 
 
 
 const char* MASTER_PASSWORD_FILENAME = "master.txt";
-const char* SITE_FILENAME = "site.txt";
+const char* SITE_FILENAME = "sites.txt";
 const char* PASSWORD_FILENAME = "passwords.txt";
 const char* NONCE_FILENAME = "nonces.txt";
 
@@ -95,11 +95,12 @@ int main(int argc, char** argv) {
             masterStream.close(); // useless but it's a good practice to do it.
             stored_salt = base64_decode(stored_salt);
 
-            key = (unsigned char*) sodium_malloc(crypto_secretbox_KEYBYTES);
+            key = (unsigned char*) sodium_malloc(crypto_secretbox_KEYBYTES + 1);
             if (KDF(key, masterPassword, (unsigned char*) stored_salt.c_str())) {
                 sodium_free(masterPassword);
                 return EXIT_FAILURE;
             }
+            key[crypto_secretbox_KEYBYTES] = '\0';
             // Get out of my memory, plaintext !
             sodium_free(masterPassword);
 
@@ -237,119 +238,105 @@ int main(int argc, char** argv) {
                     cin.clear();
                     cin.ignore(numeric_limits<streamsize>::max(), '\n');
 
-                    // Can you do this ?
-                    FILE* oldMasterFile = fopen(MASTER_PASSWORD_FILENAME, "r+"); // NULL if there's no file.
-                    char* oldMasterPassword = (char*) sodium_malloc(MASTER_PASSWORD_LENGTH + 1);
-                    if (oldMasterPassword == NULL) {
+                    const char * tmp_master_filename    = "tmp_master.txt";
+                    const char * tmp_site_filename      = "tmp_sites.txt";
+                    const char * tmp_password_filename  = "tmp_passwords.txt";
+                    const char * tmp_nonce_filename     = "tmp_nonces.txt";
+
+                    FILE* new_master_file;
+                    unsigned char new_salt[crypto_pwhash_SALTBYTES];
+                    char new_hashed_password[crypto_pwhash_STRBYTES];
+                    char* new_master_password = (char*) sodium_malloc(MASTER_PASSWORD_LENGTH + 1);
+                    if (new_master_password == NULL) {
                         return EXIT_FAILURE;
                     }
-
-                    if (identityCheck(oldMasterPassword, oldMasterFile)) {
-                        cout << "Who are you, this is not the password !?" << endl;
-                        sodium_free(oldMasterPassword);
-                        state = LOCKED;
-                        continue;
-                    }
-                    sodium_free(oldMasterPassword);
-
-
-                    // Prepare the new values.
-                    FILE* tmp_masterFile;
-                    char* tmp_masterPassword = (char*) sodium_malloc(MASTER_PASSWORD_LENGTH + 1);
-                    if (tmp_masterPassword == NULL) {
-                        return EXIT_FAILURE;
-                    }
-                    const char * tmp_master_filename = "tmp_master.txt";
-                    const char * tmp_site_filename = "tmp_site.txt";
-                    const char * tmp_password_filename = "tmp_password.txt";
-                    const char * tmp_nonce_filename = "tmp_nonce.txt";
-
-                    char tmp_hashed_password[crypto_pwhash_STRBYTES];
-                    unsigned char * new_key = (unsigned char*) sodium_malloc(crypto_secretbox_KEYBYTES);
-                    unsigned char tmp_salt[crypto_pwhash_SALTBYTES];
-
-                    newMaster(tmp_masterPassword, tmp_masterFile, tmp_hashed_password, tmp_salt, tmp_master_filename, tmp_site_filename, tmp_password_filename, tmp_nonce_filename);
-
-                    if (KDF(new_key, tmp_masterPassword, tmp_salt)) {
-                        sodium_free(tmp_masterPassword);
-                        return EXIT_FAILURE;
-                    }
-                    // Get out of my memory, plaintext !
-                    sodium_free(tmp_masterPassword);
+                    newMaster(new_master_password, new_master_file, new_hashed_password, new_salt, tmp_master_filename, tmp_site_filename, tmp_password_filename, tmp_nonce_filename);
                     
-                    // Parse, decrypt and encrypt the passwords.
-                    fstream old_siteFile;
-                    fstream old_passwordFile;
-                    fstream old_nonceFile;
-                    fstream new_siteFile;
-                    fstream new_passwordFile;
-                    fstream new_nonceFile;
+                    unsigned char* new_key = (unsigned char*) sodium_malloc(crypto_secretbox_KEYBYTES+1);
+                    if(new_key == NULL){
+                        sodium_free(new_key);
+                        sodium_free(key);
+                        sodium_free(new_master_password);
+                        return EXIT_FAILURE;
+                    }
+                    new_key[crypto_secretbox_KEYBYTES] = '\0';
+                    
 
-                    old_siteFile.open(SITE_FILENAME);
-                    old_passwordFile.open(PASSWORD_FILENAME);
-                    old_nonceFile.open(NONCE_FILENAME);
+                    // Ugly solution to get the salt...
+                    fstream masterStream;
+                    masterStream.open(tmp_master_filename);
+                    string new_stored_salt;
+                    getline(masterStream, new_stored_salt); // Get rid of the hash
+                    getline(masterStream, new_stored_salt); // Get the salt
+                    masterStream.close(); // useless but it's a good practice to do it.
+                    new_stored_salt = base64_decode(new_stored_salt);
 
-                    string old_site;
-                    string old_cipher;
-                    string old_nonce;
 
-                    while (getline(old_siteFile, old_site) && getline(old_passwordFile, old_cipher) && getline(old_nonceFile, old_nonce)) {
-                        old_cipher = base64_decode(old_cipher);
-                        old_nonce = base64_decode(old_nonce);
+                    if (KDF(new_key, new_master_password, (unsigned char*) new_stored_salt.c_str())) {
+                        sodium_free(new_key);
+                        sodium_free(key);
+                        sodium_free(new_master_password);
+                        return EXIT_FAILURE;
+                    }
+                    sodium_free(new_master_password);
+                    
+                    fstream old_site_file;
+                    fstream old_password_file;
+                    fstream old_nonce_file;
 
-                        // Decrypt the passwords
+                    old_site_file.open(SITE_FILENAME);
+                    old_password_file.open(PASSWORD_FILENAME);
+                    old_nonce_file.open(NONCE_FILENAME);
+
+                    fstream new_site_file;
+                    fstream new_password_file;
+                    fstream new_nonce_file;
+
+                    new_site_file.open(tmp_site_filename, ios::app);
+                    new_password_file.open(tmp_password_filename, ios::app);
+                    new_nonce_file.open(tmp_nonce_filename, ios::app);
+
+                    string tmp_site;
+                    string tmp_password;
+                    string tmp_nonce;
+
+                    while(getline(old_site_file, tmp_site) && getline(old_password_file, tmp_password) && getline(old_nonce_file, tmp_nonce)){
+                        tmp_password = base64_decode(tmp_password);
+                        tmp_nonce = base64_decode(tmp_nonce);
+
                         unsigned char* decrypted = (unsigned char*) sodium_malloc(PASSWORD_LENGTH + 1);
                         if (decrypted == NULL) {
-                            return EXIT_FAILURE;
+                            break;
                         }
-                        decrypted[old_cipher.size() - crypto_secretbox_MACBYTES] = '\0';
-                        // Some password may be lost...
-
-
-                        if (decryptPassword(decrypted, (unsigned char*) old_cipher.c_str(), key, (unsigned char*) old_nonce.c_str())) {
+                        decrypted[tmp_password.size() - crypto_secretbox_MACBYTES] = '\0';
+                        
+                        if (decryptPassword(decrypted, (unsigned char*) tmp_password.c_str(), key, (unsigned char*) tmp_nonce.c_str())) {
                             cout << "I may have lost this password..." << endl;
                             sodium_free(decrypted);
                             continue;
                         }
 
-                        
-
-                        // Encrypt again
-                        // TODO: I don't know what
                         unsigned char new_nonce[crypto_secretbox_NONCEBYTES];
                         unsigned char new_cipher[crypto_secretbox_MACBYTES + strlen((char*) decrypted)];
-                        encryptPassword(new_cipher, new_key, new_nonce, decrypted);
-                        
-                        if (decryptPassword(decrypted, new_cipher, new_key, new_nonce)) {
-                            cout << "This should not happen... but it does :)" << endl;
-                            sodium_free(decrypted);
-                            continue;
-                        }
+                        encryptPassword(new_cipher, new_key, (unsigned char *)new_nonce, decrypted);
 
                         sodium_free(decrypted);
 
-                        // Store
-                        new_siteFile.open(tmp_site_filename, ios::app);
-                        new_siteFile << old_site << endl;
-                        new_siteFile.close();
-
-                        new_passwordFile.open(tmp_password_filename, ios::app);
-                        new_passwordFile << base64_encode(new_cipher, sizeof (new_cipher)) << endl;
-                        new_passwordFile.close();
-
-                        new_nonceFile.open(tmp_nonce_filename, ios::app);                        
-                        new_nonceFile << base64_encode(new_nonce, sizeof (new_nonce)) << endl;
-                        new_nonceFile.close();
+                        new_site_file       << tmp_site                                         << endl;
+                        new_password_file   << base64_encode(new_cipher, sizeof (new_cipher))   << endl;
+                        new_nonce_file      << base64_encode(new_nonce,  sizeof (new_nonce))    << endl;
 
                     }
                     sodium_free(new_key);
 
-                    old_siteFile.close();
-                    old_passwordFile.close();
-                    old_nonceFile.close();
-                    
+                    old_site_file.close();
+                    old_password_file.close();
+                    old_nonce_file.close();
 
-                    // Replace the old files by the new one.
+                    new_site_file.close();
+                    new_password_file.close();
+                    new_nonce_file.close();
+
                     remove(MASTER_PASSWORD_FILENAME);
                     remove(SITE_FILENAME);
                     remove(PASSWORD_FILENAME);
